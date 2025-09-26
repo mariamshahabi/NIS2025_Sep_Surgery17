@@ -58,6 +58,7 @@ dta <- dta |>
     Route_of_PN = fct_relevel(Route_of_PN, "Open"),
     #Obese = fct_relevel(Obese, "Non-obese"),
     DIED = fct_relevel(DIED, "No"),
+    Any_Complication = fct_relevel(Any_Complication, "No"),
     LOS = as.numeric(LOS),
     adj_TOTCHG = as.numeric(adj_TOTCHG),
     # BMI = fct_relevel(BMI, "Normal weight (BMI 20.0-24.9kg/m²"),
@@ -213,6 +214,32 @@ reg_model <- svyglm(
 # Print regression table
 tbl_regression(reg_model, exponentiate = T, label = reg_var_labels)
 
+```
+
+### Any Complication:
+
+```{r}
+#| label: reg_Any_Complication
+
+# Any Complication
+#Create the regression model
+reg_model <- svyglm(
+  Any_Complication ~ AGE +
+    FEMALE +
+    RACE +
+    ZIPINC_QRTL +
+    Insurance +
+    Route_of_PN +
+    HOSP_REGION +
+    HOSP_BEDSIZE +
+    elixsum +
+    Obese,
+  design = dsgn,
+  family = "quasibinomial"
+)
+
+# Print regression table
+tbl_regression(reg_model, exponentiate = T, label = reg_var_labels)
 ```
 
 ### Non-Home Discharge:
