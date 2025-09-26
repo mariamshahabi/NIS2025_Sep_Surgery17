@@ -1,0 +1,298 @@
+---
+title: "Impact of Obesity on Perioperative Outcomes at Robotic-assisted, Laparoscopic and Open Partial Nephrectomy"
+subtitle: "Analysis for RCOP NIS September 2025 Surgery 17"
+author:
+  - name: Mariam Shahabi
+    email: shahabimariam.md@gmail.com
+    orcid: 0009-0007-7229-0157
+    affiliations: 
+      - id: DMC
+        name: Dow University of Health Sciences
+        department: Department of Medicine
+---
+
+```{r}
+#| label: libraries_setup
+#| include: false
+
+# Load libraries
+library(tidyverse)
+library(easystats)
+library(arrow)
+library(survey)
+library(gtsummary)
+library(cardx)
+library(broom.helpers)
+
+
+# Load external dependencies
+source("./scripts/labels.R")
+
+```
+
+```{r}
+#| label: data_setup
+#| include: false
+
+# Global options
+TESTING <- F
+
+#Import data
+if (TESTING) {
+  dta <- arrow::open_dataset(
+    "./nis_data/NIS2025_Sep_Surgery17_testing.parquet"
+  ) |>
+    collect()
+} else {
+  dta <- arrow::open_dataset(
+    "./nis_data/NIS2025_Sep_Surgery17.parquet/"
+  ) |>
+    collect()
+}
+
+# Set factor references
+dta <- dta |>
+  mutate(
+    RACE = fct_relevel(RACE, "White"),
+    Insurance = fct_relevel(Insurance, "Private"),
+    Route_of_PN = fct_relevel(Route_of_PN, "Open"),
+    #Obese = fct_relevel(Obese, "Non-obese"),
+    DIED = fct_relevel(DIED, "No"),
+    LOS = as.numeric(LOS),
+    adj_TOTCHG = as.numeric(adj_TOTCHG),
+    # BMI = fct_relevel(BMI, "Normal weight (BMI 20.0-24.9kg/m²"),
+    Non_Home_Discharge = fct_relevel(Non_Home_Discharge, "No")
+    )
+
+# Set survey options for lonely PSUs
+options(survey.lonely.psu = "adjust")
+options(survey.adjust.domain.lonely = TRUE)
+
+# Define survey design
+dsgn <- svydesign(
+  id = ~ HOSPID,
+  strata = ~ NIS_STRATUM,
+  weights = ~ TRENDWT,
+  data = dta,
+  nest = TRUE
+)
+
+# Subset data for specific condition
+dsgn <- subset(
+  dsgn,
+  Partial_Nephrectomy == "Yes" &
+    Renal_Cell_Carcinoma == "Yes" &
+    AGE >= 18 &
+    TRAN_IN == "No transfer" &
+    TRAN_OUT == "No transfer"
+)
+
+# Clean up memory
+rm(dta)
+gc()
+
+```
+
+## Preamble:
+
+-   **Reference Papers:**
+
+    -   [Ghani et al. 2014](https://www.auajournals.org/doi/10.1016/j.juro.2013.10.099)
+
+    -   [Knipper et al. 2019](https://pubmed.ncbi.nlm.nih.gov/31336110/)
+
+    -   [Di Bello et al.2025](https://link.springer.com/article/10.1245/s10434-025-17398-3)
+
+-   **Study Objective**: To evaluate the impact of obesity on clinical outcomes and resource utilization on patients with renal cell carcinoma undergoing robotic, laparoscopic, or open partial nephrectomy (PN).
+
+-   **Data Source**: Cross-sectional analysis using the National Inpatient Sample (NIS) database from 2018 to 2020, a representative sample of all-payer inpatient hospitalizations in the U.S.
+
+-   **Patient Selection**: The study cohort included all hospital admissions of patients aged ≥ 18 years with a primary diagnosis of nonmetastatic RCC and a primary or secondary procedure code for robotic, laparoscopic, or open partial nephrectomy. To ensure accurate attribution of outcomes to the index hospital, patients who were transferred into or out of the hospital were excluded.
+
+- **Outcomes of Interest**:
+
+    - In-hospital Mortality 
+    
+    - Non-Home Discharge
+        
+    - Length of Stay (LOS) in days  
+        
+    - Inflation-adjusted Total Charges (converted to 2020 U.S. dollars using Consumer Price Index data) 
+
+-   **Statistical Analysis**: Univariable and multivariable analyses were conducted to assess the association between hospital location/teaching status and the outcomes of interest:
+
+    -   **Univariable Analysis:**
+
+        -   Continuous variables: Design-based Kruskal-Wallis test.
+
+        -   Categorical variables: Pearson’s X² test with Rao & Scott adjustment to account for survey design.
+
+    -   **Multivariable Analysis:**
+
+        -   Logistic regression for binary outcomes (e.g., mortality, complications).
+
+        -   Linear regression for continuous outcomes (e.g., length of stay, total charges).
+
+    -   **Adjustments:** Models controlled for the following covariates:
+
+        -   **Demographics and Socioeconomic Factors**: Age, Sex, Race, Residential income, Expected primary payer.
+
+        -   **Clinical Factors:** A summary measure of comorbidity (Elixhauser comorbidity index).
+
+        -   **Hospital-Level Factors:** Hospital region and Hospital bedsize.
+
+-   **Software:** All statistical analyses were performed using R Statistical Language (Version 4.5.0; R Foundation for Statistical Computing, Vienna, Austria), incorporating survey-weighted procedures via the *survey* package to account for the complex sampling design of NIS.
+
+## Baseline Table:
+
+```{r}
+#| label: baseline
+
+# Create baseline table
+tbl_svybaseline <- dsgn %>%
+  tbl_svysummary(
+    by = Obese,
+    include = baseline_var,
+    label = baseline_var_labels,
+    statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    missing = "no"
+  ) %>%
+  add_p() |>
+  add_overall()
+
+# Print baseline table
+tbl_svybaseline
+
+```
+
+## Univariable Analysis:
+
+```{r}
+#| label: outcomes_table
+
+# Create outcomes table
+tbl_svyoutcomes <- dsgn %>%
+  tbl_svysummary(
+    by = Obese,
+    include = outcome_var,
+    label = outcome_var_labels,
+    missing = "no"
+  ) %>%
+  add_p() |>
+  add_overall()
+
+# Print outcomes table
+tbl_svyoutcomes
+
+```
+
+## Multivariable Logistic Regression:
+
+### In-hospital Mortality:
+
+```{r}
+#| label: reg_DIED
+
+# Mortality
+#Create the regression model
+reg_model <- svyglm(
+  DIED ~ AGE +
+    FEMALE +
+    RACE +
+    ZIPINC_QRTL +
+    Insurance +
+    Route_of_PN +
+    HOSP_REGION +
+    HOSP_BEDSIZE +
+    elixsum +
+    Obese,
+  design = dsgn,
+  family = "quasibinomial"
+)
+
+# Print regression table
+tbl_regression(reg_model, exponentiate = T, label = reg_var_labels)
+
+```
+
+### Non-Home Discharge:
+
+```{r}
+#| label: reg_Non_Home_Discharge
+
+# Non-Home-Discharge
+#Create the regression model
+reg_model <- svyglm(
+  Non_Home_Discharge ~ AGE +
+    FEMALE +
+    RACE +
+    ZIPINC_QRTL +
+    Insurance +
+    Route_of_PN +
+    HOSP_REGION +
+    HOSP_BEDSIZE +
+    elixsum +
+    Obese,
+  design = dsgn,
+  family = "quasibinomial"
+)
+
+# Print regression table
+tbl_regression(reg_model, exponentiate = T, label = reg_var_labels)
+```
+
+## Multivariable Linear Regression:
+
+### Length of Stay:
+
+```{r}
+#| label: reg_LOS
+
+# Length of Stay
+# Create the regression model
+reg_model <- svyglm(
+  LOS ~ AGE +
+    FEMALE +
+    RACE +
+    ZIPINC_QRTL +
+    Insurance +
+    Route_of_PN +
+    HOSP_REGION +
+    HOSP_BEDSIZE +
+    elixsum +
+    Obese,
+  design = dsgn,
+  family = "gaussian"
+)
+
+# Print regression table
+tbl_regression(reg_model, exponentiate = F, label = reg_var_labels)
+
+```
+
+### Inflation-adjusted Total Charge:
+
+```{r}
+#| label: reg_adj_TOTCHG
+
+# Total Charge (Inflation Adjusted)
+# Create the regression model
+reg_model <- svyglm(
+  adj_TOTCHG ~ AGE +
+    FEMALE +
+    RACE +
+    ZIPINC_QRTL +
+    Insurance +
+    Route_of_PN +
+    HOSP_REGION +
+    HOSP_BEDSIZE +
+    elixsum +
+    Obese,
+  design = dsgn,
+  family = "gaussian"
+)
+
+# Print regression table
+tbl_regression(reg_model, exponentiate = F, label = reg_var_labels)
+
+```
